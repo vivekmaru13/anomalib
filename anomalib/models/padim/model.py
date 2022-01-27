@@ -26,10 +26,12 @@ import torchvision
 from kornia import gaussian_blur2d
 from omegaconf import DictConfig, ListConfig
 from torch import Tensor, nn
+import numpy as np
 
 from anomalib.core.model import AnomalyModule
 from anomalib.core.model.feature_extractor import FeatureExtractor
 from anomalib.core.model.multi_variate_gaussian import MultiVariateGaussian
+from anomalib.core.model.selective_feature_modelling import SelectiveFeatureModel
 from anomalib.data.tiler import Tiler
 
 __all__ = ["PadimLightning"]
@@ -70,18 +72,24 @@ class PadimModel(nn.Module):
         self.dims = DIMS[backbone]
         # pylint: disable=not-callable
         # Since idx is randomly selected, save it with model to get same results
+        #self.register_buffer(
+        #    "idx",
+        #    torch.tensor(sample(range(0, DIMS[backbone]["orig_dims"]), DIMS[backbone]["reduced_dims"])),
+        #)
         self.register_buffer(
             "idx",
-            torch.tensor(sample(range(0, DIMS[backbone]["orig_dims"]), DIMS[backbone]["reduced_dims"])),
+            torch.tensor(range(0, DIMS[backbone]["orig_dims"])),
         )
         self.idx: Tensor
         self.loss = None
         self.anomaly_map_generator = AnomalyMapGenerator(image_size=input_size)
+        self.feature_pooler = torch.nn.AvgPool2d(3, 1, 1)
 
-        n_features = DIMS[backbone]["reduced_dims"]
+        n_features = DIMS[backbone]["orig_dims"]
         patches_dims = torch.tensor(input_size) / DIMS[backbone]["emb_scale"]
         n_patches = patches_dims.prod().int().item()
         self.gaussian = MultiVariateGaussian(n_features, n_patches)
+        self.feature_model = SelectiveFeatureModel(0.1)
 
         if apply_tiling:
             assert tile_size is not None
@@ -114,6 +122,7 @@ class PadimModel(nn.Module):
             input_tensor = self.tiler.tile(input_tensor)
         with torch.no_grad():
             features = self.feature_extractor(input_tensor)
+            features = {layer: self.feature_pooler(feature) for layer, feature in features.items()}
             embeddings = self.generate_embedding(features)
         if self.apply_tiling:
             embeddings = self.tiler.untile(embeddings)
@@ -185,8 +194,9 @@ class AnomalyMapGenerator:
         distances = (torch.matmul(delta, inv_covariance) * delta).sum(2).permute(1, 0)
         distances = distances.reshape(batch, height, width)
         distances = torch.sqrt(distances)
+        max_activation_val, _ = torch.max((torch.matmul(delta, inv_covariance) * delta), 0)
 
-        return distances
+        return (distances, max_activation_val)
 
     def up_sample(self, distance: Tensor) -> Tensor:
         """Up sample anomaly score to match the input image size.
@@ -236,14 +246,14 @@ class AnomalyMapGenerator:
             Output anomaly score.
         """
 
-        score_map = self.compute_distance(
+        score_map, max_activation_val = self.compute_distance(
             embedding=embedding,
             stats=[mean.to(embedding.device), inv_covariance.to(embedding.device)],
         )
         up_sampled_score_map = self.up_sample(score_map)
         smoothed_anomaly_map = self.smooth_anomaly_map(up_sampled_score_map)
 
-        return smoothed_anomaly_map
+        return (smoothed_anomaly_map, max_activation_val)
 
     def __call__(self, **kwds):
         """Returns anomaly_map.
@@ -339,7 +349,74 @@ class PadimLightning(AnomalyModule):
             Dictionary containing images, features, true labels and masks.
             These are required in `validation_epoch_end` for feature concatenation.
         """
-
-        batch["anomaly_maps"] = self.model(batch["image"])
+        map, max_activation_val = self.model(batch["image"])
+        batch["anomaly_maps"] = map
+        batch["max_activation_val"] = max_activation_val
 
         return batch
+
+    def validation_epoch_end(self, outputs: List[Dict[str, Tensor]]) -> None:
+        """Validation epoch end for padim
+
+        Compute threshold and metrics by parent class & perform class feature modelling.
+
+        Args:
+            outputs (List[Dict[str, Tensor]]): Batch of outputs from the validation step
+
+        Returns:
+            None
+        """
+        super().validation_epoch_end(outputs)
+        max_val_features = torch.vstack([x["max_activation_val"] for x in outputs])
+        class_labels = np.hstack([x["class"] for x in outputs])
+        #print(len(class_labels))
+        self.class_stats = self.model.feature_model.fit(max_val_features, class_labels)
+
+    def test_epoch_end(self, outputs) -> None:
+        class_stats = {}
+        max_activation_val = torch.vstack([x["max_activation_val"] for x in outputs])
+        class_labels = np.hstack([x["class"] for x in outputs])
+
+        class_names = np.unique(class_labels)
+        #print(class_labels)
+        #print(max_activation_val.shape)
+
+        results={}
+        for class_name in class_names:
+            results[class_name] = []
+        # sorted values and idx for entire feature set
+        max_val, max_idx = torch.sort(max_activation_val, descending=True)
+        reduced_range = int(max_val.shape[1] * 0.10)
+        top_max_val = max_val[:, 0:reduced_range]
+        # indexes of top 10% FEATURES HAVING MAX VALUE
+        top_max_idx = max_idx[:, 0:reduced_range]
+        correct_class = []
+        for idx,feature in enumerate(top_max_idx):
+            scores=[]
+            for class_name in class_names:
+                #print(class_name)
+                stats = getattr(self.model.feature_model, class_name).cpu()
+                score = stats[1][np.isin(stats[0],feature)].sum()
+                scores.append(score)
+            scores[np.where(class_names=='good')[0][0]]=0
+            if 'combined' in class_names:
+                scores[np.where(class_names=='combined')[0][0]]=0
+            if 'thread' in class_names:
+                scores[np.where(class_names=='thread')[0][0]]=0
+            predicted_class = class_names[scores.index(max(scores))]
+            if class_labels[idx] not in  ['good','thread','combined']:
+                #print(f"predicted: {predicted_class}, actual: {class_labels[idx]}")
+                if predicted_class == class_labels[idx]:
+                    correct_class.append(1)
+                    results[class_labels[idx]].append(1)
+                else:
+                    correct_class.append(0)
+                    results[class_labels[idx]].append(0)
+        print("*********************")
+        print(class_names)
+        for class_name in class_names:
+            if class_name not in  ['good','thread','combined']:
+                print(f"{class_name} accuracy: {sum(results[class_name])/len(results[class_name])}")
+        print(f"average accuracy: {sum(correct_class)/len(correct_class)}")
+
+        super().test_epoch_end(outputs)

@@ -36,9 +36,4 @@ TBD
 
 ### Sample Results
 
-![Sample Result 1](../../../docs/source/images/fastflow/results/0.png "Sample Result 1")
-
-![Sample Result 2](../../../docs/source/images/fastflow/results/1.png "Sample Result 2")
-
-![Sample Result 3](../../../docs/source/images/fastflow/results/2.png "Sample Result 3")
-
+TBD

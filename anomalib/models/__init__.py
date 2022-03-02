@@ -23,6 +23,10 @@ from torch import load
 
 from anomalib.models.components import AnomalyModule
 
+from .padim import Padim
+
+__all__ = ["Padim"]
+
 
 def get_model(config: Union[DictConfig, ListConfig]) -> AnomalyModule:
     """Load model from the configuration file.

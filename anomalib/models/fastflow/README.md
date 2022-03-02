@@ -1,4 +1,4 @@
-# FASTFLOW: Unsupervised Anomaly Detection and Localization via 2D Normalizing Flows.
+# ⚠️ WiP - FASTFLOW: Unsupervised Anomaly Detection and Localization via 2D Normalizing Flows.
 
 This is the implementation of the [FASTFLOW-AD](https://arxiv.org/pdf/2111.07677.pdf) paper.
 

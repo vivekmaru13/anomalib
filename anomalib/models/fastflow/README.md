@@ -4,6 +4,10 @@ This is the implementation of the [FASTFLOW-AD](https://arxiv.org/pdf/2111.07677
 
 Model Type: Segmentation
 
+
+> ⚠️ NOTE: This is still WiP, and has not been merged into develop branch yet. 👷‍♂️ 🚧
+
+
 ## Description
 
 FASTFLOW model is based on a conditional normalizing flow framework adopted for anomaly detection with localization. It consists of a discriminatively pretrained encoder followed by a multi-scale generative decoders. The encoder extracts features with multi-scale pyramid pooling to capture both global and local semantic information with the growing from top to bottom receptive fields. Pooled features are processed by a set of decoders to explicitly estimate likelihood of the encoded features. The estimated multi-scale likelyhoods are upsampled to input size and added up to produce the anomaly map.

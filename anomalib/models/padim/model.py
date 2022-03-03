@@ -349,6 +349,8 @@ class Padim(AnomalibModule):
         layers (List[str]): Layers to extract features from the backbone CNN
         input_size (Tuple[int, int]): Size of the model input.
         backbone (str): Backbone CNN network
+        normalization (Optional[str], optional): Type of the normalization to apply to the heatmap.
+            Defaults to None.
     """
 
     def __init__(
@@ -360,8 +362,9 @@ class Padim(AnomalibModule):
         layers: List[str],
         input_size: Tuple[int, int],
         backbone: str,
+        normalization: Optional[str] = None,
     ):
-        super().__init__(task, adaptive_threshold, default_image_threshold, default_pixel_threshold)
+        super().__init__(task, adaptive_threshold, default_image_threshold, default_pixel_threshold, normalization)
         self.layers = layers
         self.model: PadimModel = PadimModel(
             layers=layers,

@@ -1,6 +1,7 @@
 seed_everything: 0
+
 data:
-  class_path: anomalib.data.MVTec
+  class_path: anomalib.data.Mvtec
   init_args:
     root: ./datasets/MVTec
     category: bottle
@@ -10,26 +11,29 @@ data:
     num_workers: 0
 
 tiling:
-  enable: false
+  enable: true
   tile_size: 256
 
 model:
-  class_path: anomalib.models.Padim
+  class_path: anomalib.models.Stfpm
   init_args:
     task: segmentation
     adaptive_threshold: true
-    default_image_threshold: 3.0
-    default_pixel_threshold: 3.0
+    default_threshold: 12.0
     layers:
       - layer1
       - layer2
       - layer3
     input_size: [256, 256]
     backbone: resnet18
-    normalization: null
 
 trainer:
-  callbacks: null
+  callbacks:
+    - class_path: pytorch_lightning.callbacks.EarlyStopping
+      init_args:
+        patience: 5
+        monitor: pixel_AUROC
+        mode: max
   logger: true
   checkpoint_callback: null
   enable_checkpointing: true
@@ -71,7 +75,7 @@ trainer:
   enable_model_summary: true
   weights_summary: top
   weights_save_path: null
-  num_sanity_val_steps: 0
+  num_sanity_val_steps: 2
   resume_from_checkpoint: null
   profiler: null
   benchmark: false

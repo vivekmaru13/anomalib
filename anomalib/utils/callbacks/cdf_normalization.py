@@ -21,7 +21,6 @@ from pytorch_lightning import Callback, Trainer
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from torch.distributions import LogNormal
 
-from anomalib.models import get_model
 from anomalib.post_processing.normalization.cdf import normalize, standardize
 
 
@@ -106,6 +105,9 @@ class CdfNormalizationCallback(Callback):
     @staticmethod
     def _create_inference_model(pl_module):
         """Create a duplicate of the PL module that can be used to perform inference on the training set."""
+        # Import `get_model` here to avoid circular imports.
+        from anomalib.models import get_model  # pylint: disable=import-outside-toplevel
+
         new_model = get_model(pl_module.hparams)
         new_model.load_state_dict(pl_module.state_dict())
         return new_model

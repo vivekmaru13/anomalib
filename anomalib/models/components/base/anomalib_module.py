@@ -22,6 +22,8 @@ from pytorch_lightning.callbacks.base import Callback
 from torch import Tensor, nn
 from torchmetrics import F1, MetricCollection
 
+from anomalib.utils.callbacks.cdf_normalization import CdfNormalizationCallback
+from anomalib.utils.callbacks.min_max_normalization import MinMaxNormalizationCallback
 from anomalib.utils.metrics import (
     AUROC,
     AdaptiveThreshold,
@@ -40,6 +42,8 @@ class AnomalibModule(pl.LightningModule, ABC):
         adaptive_threshold (bool): Boolean to check if threshold is adaptively computed.
         default_image_threshold (float): Default image threshold value.
         default_pixel_threshold (float): Default pixel threshold value.
+        normalization (Optional[str], optional): Type of the normalization to apply to the heatmap.
+            Defaults to None.
     """
 
     def __init__(
@@ -48,8 +52,8 @@ class AnomalibModule(pl.LightningModule, ABC):
         adaptive_threshold: bool,
         default_image_threshold: float,
         default_pixel_threshold: float,
+        normalization: Optional[str] = None,
     ) -> None:
-
         super().__init__()
 
         self.save_hyperparameters()
@@ -61,8 +65,11 @@ class AnomalibModule(pl.LightningModule, ABC):
         self.image_threshold = AdaptiveThreshold(default_image_threshold).cpu()
         self.pixel_threshold = AdaptiveThreshold(default_pixel_threshold).cpu()
 
-        self.training_distribution = AnomalyScoreDistribution().cpu()
-        self.min_max = MinMax().cpu()
+        self.normalization = normalization
+        if self.normalization == "min_max":
+            self.min_max = MinMax().cpu()
+        if self.normalization == "cdf":
+            self.training_distribution = AnomalyScoreDistribution().cpu()
 
         self.model: nn.Module
 
@@ -71,6 +78,22 @@ class AnomalibModule(pl.LightningModule, ABC):
         f1_score = F1(num_classes=1, compute_on_step=False)
         self.image_metrics = MetricCollection([auroc, f1_score], prefix="image_").cpu()
         self.pixel_metrics = self.image_metrics.clone(prefix="pixel_").cpu()
+
+    def configure_callbacks(self):
+        """Configure callbacks."""
+        callbacks = []
+
+        if self.normalization:
+            if self.normalization == "min_max":
+                callbacks.append(MinMaxNormalizationCallback())
+            elif self.normalization == "cdf":
+                callbacks.append(CdfNormalizationCallback())
+            else:
+                raise ValueError(
+                    f"Unknown normalization type {self.normalization}.\n"
+                    "Supported normalization types are min_max and cdf"
+                )
+        return callbacks
 
     def forward(self, batch):  # pylint: disable=arguments-differ
         """Forward-pass input tensor to the module.

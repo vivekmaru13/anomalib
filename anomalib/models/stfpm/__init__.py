@@ -15,8 +15,9 @@
 # and limitations under the License.
 
 from .model import (  # noqa # pylint: disable=unused-import
-    AnomalyMapGenerator,
-    Loss,
+    Stfpm,
     StfpmLightning,
-    STFPMModel,
+    StfpmModel,
 )
+
+__all__ = ["Stfpm", "StfpmLightning", "StfpmModel"]

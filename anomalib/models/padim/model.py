@@ -20,6 +20,7 @@ Paper https://arxiv.org/abs/2011.08785
 from random import sample
 from typing import Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 import torchvision
@@ -74,14 +75,18 @@ class PadimModel(nn.Module):
             "idx",
             torch.tensor(sample(range(0, DIMS[backbone]["orig_dims"]), DIMS[backbone]["reduced_dims"])),
         )
+        #self.register_buffer(
+        #    "idx",
+        #    torch.tensor(range(0, DIMS[backbone]["orig_dims"])),
+        #)
         self.idx: Tensor
         self.loss = None
         self.anomaly_map_generator = AnomalyMapGenerator(image_size=input_size)
 
-        n_features = DIMS[backbone]["reduced_dims"]
+        self.n_features = DIMS[backbone]["reduced_dims"]
         patches_dims = torch.tensor(input_size) / DIMS[backbone]["emb_scale"]
-        n_patches = patches_dims.prod().int().item()
-        self.gaussian = MultiVariateGaussian(n_features, n_patches)
+        self.n_patches = patches_dims.prod().int().item()
+        self.gaussian = MultiVariateGaussian(self.n_features, self.n_patches)
 
         if apply_tiling:
             assert tile_size is not None
@@ -121,9 +126,10 @@ class PadimModel(nn.Module):
         if self.training:
             output = embeddings
         else:
-            output = self.anomaly_map_generator(
+            anomaly_map = self.anomaly_map_generator(
                 embedding=embeddings, mean=self.gaussian.mean, inv_covariance=self.gaussian.inv_covariance
             )
+            output = (anomaly_map,embeddings)
 
         return output
 
@@ -185,6 +191,7 @@ class AnomalyMapGenerator:
         distances = (torch.matmul(delta, inv_covariance) * delta).sum(2).permute(1, 0)
         distances = distances.reshape(batch, height, width)
         distances = torch.sqrt(distances)
+        max_activation_val, _ = torch.max((torch.matmul(delta, inv_covariance) * delta), 0)
 
         return distances
 
@@ -340,6 +347,80 @@ class PadimLightning(AnomalyModule):
             These are required in `validation_epoch_end` for feature concatenation.
         """
 
-        batch["anomaly_maps"] = self.model(batch["image"])
+        map, embeddings = self.model(batch["image"])
+        batch["anomaly_maps"] = map
+        batch["embeddings"] = embeddings
 
         return batch
+
+    def validation_epoch_end(self, outputs: List[Dict[str, Tensor]]) -> None:
+        """Validation epoch end for padim
+
+        Compute threshold and metrics by parent class & perform class feature modelling.
+
+        Args:
+            outputs (List[Dict[str, Tensor]]): Batch of outputs from the validation step
+
+        Returns:
+            None
+        """
+        super().validation_epoch_end(outputs)
+        embeddings = torch.vstack([x["embeddings"] for x in outputs])
+        class_labels = np.hstack([x["class"] for x in outputs])
+        class_names = np.unique(class_labels)
+
+        for class_name in class_names:
+            print("creating model for " + class_name)
+            setattr(self,class_name,MultiVariateGaussian(self.model.n_features, self.model.n_patches))
+            class_embeddings = embeddings[class_labels==class_name]
+            getattr(self,class_name).fit(class_embeddings)
+
+    def test_epoch_end(self, outputs):
+        print("test epoch end")
+        embeddings = torch.vstack([x["embeddings"] for x in outputs])
+        class_labels = np.hstack([x["class"] for x in outputs])
+
+        class_names = np.unique(class_labels)
+
+        results = {}
+        for class_name in class_names:
+            results[class_name] = []
+        correct_class = []
+        for idx, feature in enumerate(embeddings):
+            scores = []
+            for class_name in class_names:
+                gauss_model = getattr(self, class_name)
+
+
+                anomaly_map = self.model.anomaly_map_generator(
+                    embedding=feature.unsqueeze(0), mean=gauss_model.mean, inv_covariance=gauss_model.inv_covariance
+                )
+
+                anomaly_score = anomaly_map.reshape(anomaly_map.shape[0], -1).max(dim=1).values
+                scores.append(anomaly_score)
+            scores[np.where(class_names=='good')[0][0]]=100000
+            if 'combined' in class_names:
+                scores[np.where(class_names=='combined')[0][0]]=100000
+            if 'thread' in class_names:
+                scores[np.where(class_names=='thread')[0][0]]=100000
+            predicted_class = class_names[scores.index(min(scores))]
+            if class_labels[idx] not in  ['good','thread','combined']:
+                #print(f"predicted: {predicted_class}, actual: {class_labels[idx]}")
+                if predicted_class == class_labels[idx]:
+                    correct_class.append(1)
+                    results[class_labels[idx]].append(1)
+                else:
+                    correct_class.append(0)
+                    results[class_labels[idx]].append(0)
+        print("*********************")
+        print(class_names)
+        for class_name in class_names:
+            if class_name not in  ['good','thread','combined']:
+                print(f"{class_name} accuracy: {sum(results[class_name])/len(results[class_name])}")
+        print(f"average accuracy: {sum(correct_class)/len(correct_class)}")
+
+        super().test_epoch_end(outputs)
+
+
+
+

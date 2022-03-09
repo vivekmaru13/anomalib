@@ -19,6 +19,7 @@ https://arxiv.org/abs/2103.04257
 
 from typing import Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 import torchvision
@@ -28,6 +29,7 @@ from torch import Tensor, nn, optim
 
 from anomalib.core.model import AnomalyModule
 from anomalib.core.model.feature_extractor import FeatureExtractor
+from anomalib.core.model.selective_feature_modelling import SelectiveFeatureModel
 from anomalib.data.tiler import Tiler
 
 __all__ = ["Loss", "AnomalyMapGenerator", "STFPMModel", "StfpmLightning"]
@@ -120,9 +122,17 @@ class AnomalyMapGenerator:
         norm_teacher_features = F.normalize(teacher_features)
         norm_student_features = F.normalize(student_features)
 
-        layer_map = 0.5 * torch.norm(norm_teacher_features - norm_student_features, p=2, dim=-3, keepdim=True) ** 2
+        diff = norm_teacher_features - norm_student_features
+
+        batch, channel, height, width = diff.shape
+
+
+        layer_map = 0.5 * torch.norm(diff, p=2, dim=-3, keepdim=True) ** 2
+        diff = diff.reshape(batch, channel, height * width)
+        layer_dist, _ = torch.max(torch.abs(diff),2)
+
         layer_map = F.interpolate(layer_map, size=self.image_size, align_corners=False, mode="bilinear")
-        return layer_map
+        return (layer_map, layer_dist)
 
     def compute_anomaly_map(
         self, teacher_features: Dict[str, Tensor], student_features: Dict[str, Tensor]
@@ -138,12 +148,15 @@ class AnomalyMapGenerator:
         """
         batch_size = list(teacher_features.values())[0].shape[0]
         anomaly_map = torch.ones(batch_size, 1, self.image_size[0], self.image_size[1])
+        max_activation_val = []
         for layer in teacher_features.keys():
-            layer_map = self.compute_layer_map(teacher_features[layer], student_features[layer])
+            layer_map, layer_dist = self.compute_layer_map(teacher_features[layer], student_features[layer])
             anomaly_map = anomaly_map.to(layer_map.device)
             anomaly_map *= layer_map
+            max_activation_val.append(layer_dist)
+        max_activation_val_t = torch.cat(max_activation_val,1)
 
-        return anomaly_map
+        return (anomaly_map, max_activation_val_t)
 
     def __call__(self, **kwds: Dict[str, Tensor]) -> torch.Tensor:
         """Returns anomaly map.
@@ -213,6 +226,8 @@ class STFPMModel(nn.Module):
         else:
             self.anomaly_map_generator = AnomalyMapGenerator(image_size=tuple(input_size))
 
+        self.feature_model = SelectiveFeatureModel(0.1)
+
     def forward(self, images):
         """Forward-pass images into the network.
 
@@ -232,9 +247,10 @@ class STFPMModel(nn.Module):
         if self.training:
             output = teacher_features, student_features
         else:
-            output = self.anomaly_map_generator(teacher_features=teacher_features, student_features=student_features)
+            map, max_activation_val = self.anomaly_map_generator(teacher_features=teacher_features, student_features=student_features)
             if self.apply_tiling:
-                output = self.tiler.untile(output)
+                map = self.tiler.untile(map)
+            output = (map, max_activation_val)
 
         return output
 
@@ -309,6 +325,74 @@ class StfpmLightning(AnomalyModule):
           Dictionary containing images, anomaly maps, true labels and masks.
           These are required in `validation_epoch_end` for feature concatenation.
         """
-        batch["anomaly_maps"] = self.model(batch["image"])
+        map, max_activation_val = self.model(batch["image"])
+        batch["anomaly_maps"] = map
+        batch["max_activation_val"] = max_activation_val
 
         return batch
+
+    def validation_epoch_end(self, outputs: List[Dict[str, Tensor]]) -> None:
+        """Validation epoch end for padim
+
+        Compute threshold and metrics by parent class & perform class feature modelling.
+
+        Args:
+            outputs (List[Dict[str, Tensor]]): Batch of outputs from the validation step
+
+        Returns:
+            None
+        """
+        super().validation_epoch_end(outputs)
+        max_val_features = torch.vstack([x["max_activation_val"] for x in outputs])
+        class_labels = np.hstack([x["class"] for x in outputs])
+        #print(len(class_labels))
+        self.class_stats = self.model.feature_model.fit(max_val_features, class_labels)
+
+    def test_epoch_end(self, outputs) -> None:
+        class_stats = {}
+        max_activation_val = torch.vstack([x["max_activation_val"] for x in outputs])
+        class_labels = np.hstack([x["class"] for x in outputs])
+
+        class_names = np.unique(class_labels)
+        #print(class_labels)
+        #print(max_activation_val.shape)
+
+        results={}
+        for class_name in class_names:
+            results[class_name] = []
+        # sorted values and idx for entire feature set
+        max_val, max_idx = torch.sort(max_activation_val, descending=True)
+        reduced_range = int(max_val.shape[1] * 0.10)
+        top_max_val = max_val[:, 0:reduced_range]
+        # indexes of top 10% FEATURES HAVING MAX VALUE
+        top_max_idx = max_idx[:, 0:reduced_range]
+        correct_class = []
+        for idx,feature in enumerate(top_max_idx):
+            scores=[]
+            for class_name in class_names:
+                #print(class_name)
+                stats = getattr(self.model.feature_model, class_name).cpu()
+                score = stats[1][np.isin(stats[0],feature)].sum()
+                scores.append(score)
+            scores[np.where(class_names=='good')[0][0]]=0
+            if 'combined' in class_names:
+                scores[np.where(class_names=='combined')[0][0]]=0
+            if 'thread' in class_names:
+                scores[np.where(class_names=='thread')[0][0]]=0
+            predicted_class = class_names[scores.index(max(scores))]
+            if class_labels[idx] not in  ['good','thread','combined']:
+                #print(f"predicted: {predicted_class}, actual: {class_labels[idx]}")
+                if predicted_class == class_labels[idx]:
+                    correct_class.append(1)
+                    results[class_labels[idx]].append(1)
+                else:
+                    correct_class.append(0)
+                    results[class_labels[idx]].append(0)
+        print("*********************")
+        print(class_names)
+        for class_name in class_names:
+            if class_name not in  ['good','thread','combined']:
+                print(f"{class_name} accuracy: {sum(results[class_name])/len(results[class_name])}")
+        print(f"average accuracy: {sum(correct_class)/len(correct_class)}")
+
+        super().test_epoch_end(outputs)

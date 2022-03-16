@@ -49,7 +49,7 @@ class SelectiveFeatureModel(nn.Module):
 
 
         for class_name in class_names:
-            print(class_name)
+            #print(class_name)
             self.register_buffer(class_name, torch.Tensor())
             setattr(self,class_name,torch.Tensor())
             # print(max_activation_val.shape)
@@ -57,7 +57,7 @@ class SelectiveFeatureModel(nn.Module):
             class_max_activations = max_activation_val[class_labels == class_name]
             # sorted values and idx for entire feature set
             max_val, max_idx = torch.sort(class_max_activations, descending=True)
-            reduced_range = int(max_val.shape[1] * 0.10)
+            reduced_range = int(max_val.shape[1] * self.feature_percentage)
             top_max_val = max_val[:, 0:reduced_range]
             # indexes of top 10% FEATURES HAVING MAX VALUE
             top_max_idx = max_idx[:, 0:reduced_range]

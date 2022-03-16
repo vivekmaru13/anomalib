@@ -136,7 +136,6 @@ class PatchcoreModel(DynamicBufferModule, nn.Module):
 
         self.register_buffer("memory_bank", torch.Tensor())
         self.memory_bank: torch.Tensor
-        self.feature_model = SelectiveFeatureModel(0.1)
 
     def forward(self, input_tensor: Tensor) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Return Embedding during training, or a tuple of anomaly map and anomaly score during testing.

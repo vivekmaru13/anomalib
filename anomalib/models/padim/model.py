@@ -39,7 +39,7 @@ __all__ = ["PadimLightning"]
 
 DIMS = {
     "resnet18": {"orig_dims": 448, "reduced_dims": 100, "emb_scale": 4},
-    "wide_resnet50_2": {"orig_dims": 1792, "reduced_dims": 550, "emb_scale": 4},
+    "wide_resnet50_2": {"orig_dims": 1792, "reduced_dims": 500, "emb_scale": 4},
 }
 
 
@@ -72,20 +72,20 @@ class PadimModel(nn.Module):
         self.dims = DIMS[backbone]
         # pylint: disable=not-callable
         # Since idx is randomly selected, save it with model to get same results
-        #self.register_buffer(
-        #    "idx",
-        #    torch.tensor(sample(range(0, DIMS[backbone]["orig_dims"]), DIMS[backbone]["reduced_dims"])),
-        #)
         self.register_buffer(
             "idx",
-            torch.tensor(range(0, DIMS[backbone]["orig_dims"])),
+            torch.tensor(sample(range(0, DIMS[backbone]["orig_dims"]), DIMS[backbone]["reduced_dims"])),
         )
+        #self.register_buffer(
+        #    "idx",
+        #    torch.tensor(range(0, DIMS[backbone]["orig_dims"])),
+        #)
         self.idx: Tensor
         self.loss = None
         self.anomaly_map_generator = AnomalyMapGenerator(image_size=input_size)
         self.feature_pooler = torch.nn.AvgPool2d(3, 1, 1)
 
-        n_features = DIMS[backbone]["orig_dims"]
+        n_features = DIMS[backbone]["reduced_dims"]
         patches_dims = torch.tensor(input_size) / DIMS[backbone]["emb_scale"]
         n_patches = patches_dims.prod().int().item()
         self.gaussian = MultiVariateGaussian(n_features, n_patches)

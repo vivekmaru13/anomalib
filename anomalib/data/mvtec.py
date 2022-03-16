@@ -95,19 +95,16 @@ def create_validation_set_from_test_set(samples: DataFrame, seed: int = 0) -> Da
     if seed > 0:
         random.seed(seed)
 
-    # Split normal images.
-    normal_test_image_indices = samples.index[(samples.split == "test") & (samples.label == "good")].to_list()
-    num_normal_valid_images = len(normal_test_image_indices) // 2
+    class_labels = samples['label'].unique()
 
-    indices_to_sample = random.sample(population=normal_test_image_indices, k=num_normal_valid_images)
-    samples.loc[indices_to_sample, "split"] = "val"
+    for class_label in class_labels:
 
-    # Split abnormal images.
-    abnormal_test_image_indices = samples.index[(samples.split == "test") & (samples.label != "good")].to_list()
-    num_abnormal_valid_images = len(abnormal_test_image_indices) // 2
+        image_indices = samples.index[(samples.split == "test") & (samples.label == class_label)].to_list()
+        num_valid_images = int(len(image_indices) // 1.43)
 
-    indices_to_sample = random.sample(population=abnormal_test_image_indices, k=num_abnormal_valid_images)
-    samples.loc[indices_to_sample, "split"] = "val"
+        indices_to_sample = random.sample(population=image_indices, k=num_valid_images)
+        samples.loc[indices_to_sample, "split"] = "val"
+
 
     return samples
 
@@ -374,7 +371,7 @@ class MVTecDataModule(LightningDataModule):
         num_workers: int = 8,
         transform_config: Optional[Union[str, A.Compose]] = None,
         seed: int = 0,
-        create_validation_set: bool = False,
+        create_validation_set: bool = True,
     ) -> None:
         """Mvtec Lightning Data Module.
 

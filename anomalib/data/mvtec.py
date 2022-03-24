@@ -34,6 +34,7 @@ import numpy as np
 import pandas as pd
 from pandas.core.frame import DataFrame
 from pytorch_lightning.core.datamodule import LightningDataModule
+from sklearn import preprocessing
 from torch import Tensor
 from torch.utils.data import DataLoader
 from torch.utils.data.dataset import Dataset
@@ -95,19 +96,15 @@ def create_validation_set_from_test_set(samples: DataFrame, seed: int = 0) -> Da
     if seed > 0:
         random.seed(seed)
 
-    # Split normal images.
-    normal_test_image_indices = samples.index[(samples.split == "test") & (samples.label == "good")].to_list()
-    num_normal_valid_images = len(normal_test_image_indices) // 2
+    class_labels = samples['label'].unique()
 
-    indices_to_sample = random.sample(population=normal_test_image_indices, k=num_normal_valid_images)
-    samples.loc[indices_to_sample, "split"] = "val"
+    for class_label in class_labels:
 
-    # Split abnormal images.
-    abnormal_test_image_indices = samples.index[(samples.split == "test") & (samples.label != "good")].to_list()
-    num_abnormal_valid_images = len(abnormal_test_image_indices) // 2
+        image_indices = samples.index[(samples.split == "test") & (samples.label == class_label)].to_list()
+        num_valid_images = int(len(image_indices) // 1.43)
 
-    indices_to_sample = random.sample(population=abnormal_test_image_indices, k=num_abnormal_valid_images)
-    samples.loc[indices_to_sample, "split"] = "val"
+        indices_to_sample = random.sample(population=image_indices, k=num_valid_images)
+        samples.loc[indices_to_sample, "split"] = "val"
 
     return samples
 
@@ -200,6 +197,10 @@ def make_mvtec_dataset(
 
     if create_validation_set:
         samples = create_validation_set_from_test_set(samples, seed=seed)
+
+    lb = preprocessing.LabelEncoder()
+    temp = lb.fit_transform(samples.label).tolist()
+    samples["class_index"] = temp[:]
 
     # Get the data frame for the split.
     if split is not None and split in ["train", "val", "test"]:
@@ -329,6 +330,7 @@ class MVTec(VisionDataset):
 
         image_path = self.samples.image_path[index]
         label = self.samples.label[index]
+        class_index = np.array(self.samples.class_index[index])
         image = read_image(image_path)
 
         if self.split == "train" or self.task == "classification":
@@ -340,6 +342,7 @@ class MVTec(VisionDataset):
             item["image_path"] = image_path
             item["class"] = label
             item["label"] = label_index
+            item["class_index"] = class_index
 
             if self.task == "segmentation":
                 mask_path = self.samples.mask_path[index]
@@ -416,6 +419,8 @@ class MVTecDataModule(LightningDataModule):
         """
         super().__init__()
 
+        self.sub_class_classification = True
+
         self.root = root if isinstance(root, Path) else Path(root)
         self.category = category
         self.dataset_path = self.root / self.category
@@ -457,24 +462,30 @@ class MVTecDataModule(LightningDataModule):
             seed=self.seed,
             create_validation_set=self.create_validation_set,
         )
-        if stage in (None, "fit"):
-            self.train_data = MVTec(
-                root=self.root,
-                category=self.category,
-                pre_process=self.pre_process,
-                split="train",
-                seed=self.seed,
-                create_validation_set=self.create_validation_set,
-            )
+        self.train_data = MVTec(
+            root=self.root,
+            category=self.category,
+            pre_process=self.pre_process,
+            split="train",
+            seed=self.seed,
+            create_validation_set=self.create_validation_set,
+        )
 
     def train_dataloader(self) -> DataLoader:
         """Get train dataloader."""
-        return DataLoader(self.train_data, shuffle=True, batch_size=self.train_batch_size, num_workers=self.num_workers)
+        if self.sub_class_classification:
+            return DataLoader(self.val_data, shuffle=True, batch_size=self.train_batch_size, num_workers=self.num_workers)
+        else:
+            return DataLoader(self.train_data, shuffle=True, batch_size=self.train_batch_size,
+                              num_workers=self.num_workers)
 
     def val_dataloader(self) -> DataLoader:
         """Get validation dataloader."""
-        dataset = self.val_data if self.create_validation_set else self.test_data
-        return DataLoader(dataset=dataset, shuffle=False, batch_size=self.test_batch_size, num_workers=self.num_workers)
+        if self.sub_class_classification:
+            return DataLoader(self.test_data, shuffle=False, batch_size=self.test_batch_size, num_workers=self.num_workers)
+        else:
+            dataset = self.val_data if self.create_validation_set else self.test_data
+            return DataLoader(dataset=dataset, shuffle=False, batch_size=self.test_batch_size, num_workers=self.num_workers)
 
     def test_dataloader(self) -> DataLoader:
         """Get test dataloader."""

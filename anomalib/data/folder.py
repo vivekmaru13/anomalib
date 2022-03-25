@@ -239,7 +239,7 @@ class FolderDataset(Dataset):
         if self.split == "train" or self.task == "classification":
             pre_processed = self.pre_process(image=image)
             item = {"image": pre_processed["image"]}
-        elif self.split in ["val", "test"]:
+        if self.split in ["val", "test"]:
             label_index = self.samples.label_index[index]
 
             item["image_path"] = image_path

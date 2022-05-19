@@ -1,0 +1,4 @@
+- step:
+    name: train-model
+    command: python tools/train.py
+    image: mahmoudabdul/anomalib:0.0.1

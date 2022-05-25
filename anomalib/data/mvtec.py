@@ -371,6 +371,7 @@ class MVTecDataModule(LightningDataModule):
     def prepare_data(self) -> None:
         """Download the dataset if not available."""
         if (self.root / self.category).is_dir():
+            print("This is just to see the path", self.root)
             logger.info("Found the dataset.")
         else:
             self.root.mkdir(parents=True, exist_ok=True)

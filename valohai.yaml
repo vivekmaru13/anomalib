@@ -2,3 +2,6 @@
     name: train-model
     command: python tools/train.py
     image: mahmoudabdul/anomalib:0.0.1
+    inputs:
+        - name: vtecdata
+          default: https://gateway.eu1.storjshare.io

@@ -342,6 +342,8 @@ class MVTecDataModule(LightningDataModule):
         super().__init__()
 
         self.root = root if isinstance(root, Path) else Path(root)
+        print("This should be the root path",self.root)
+        print("This should be the category path", self.category)
         self.category = category
         self.dataset_path = self.root / self.category
         self.transform_config_train = transform_config_train
@@ -377,7 +379,7 @@ class MVTecDataModule(LightningDataModule):
             self.root.mkdir(parents=True, exist_ok=True)
 
             logger.info("Downloading the Mvtec AD dataset.")
-            url = "https://www.mydrive.ch/shares/38536/3830184030e49fe74747669442f0f282/download/420938113-1629952094"
+            url = None #"https://www.mydrive.ch/shares/38536/3830184030e49fe74747669442f0f282/download/420938113-1629952094"
             dataset_name = "mvtec_anomaly_detection.tar.xz"
             zip_filename = self.root / dataset_name
             with DownloadProgressBar(unit="B", unit_scale=True, miniters=1, desc="MVTec AD") as progress_bar:

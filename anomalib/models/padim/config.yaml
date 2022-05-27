@@ -2,7 +2,7 @@ dataset:
   name: mvtec #options: [mvtec, btech, folder]
   format: mvtec
   # Updating the path to check with Valohai Inputs
-  path: /valohai/inputs
+  path: /valohai/inputs/vtecdata
   category: bottle
   task: segmentation
   image_size: 256

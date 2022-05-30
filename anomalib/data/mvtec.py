@@ -343,9 +343,10 @@ class MVTecDataModule(LightningDataModule):
 
         self.root = root if isinstance(root, Path) else Path(root)
         print("This should be the root path",self.root)
-        print("This should be the category path", self.category)
         self.category = category
+        print("This should be the category path", self.category)
         self.dataset_path = self.root / self.category
+        print("This should be the dataset path", self.dataset_path)
         self.transform_config_train = transform_config_train
         self.transform_config_val = transform_config_val
         self.image_size = image_size
